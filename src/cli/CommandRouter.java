@@ -1,9 +1,19 @@
 package cli;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import engine.FileSystemIO;
+import engine.HashingUtility;
 import engine.StorageEngine;
+import model.BlobNode;
+import model.CommitNode;
+import model.DirectoryTree;
 
 public class CommandRouter {
     private final StorageEngine storageEngine;
@@ -71,7 +81,61 @@ public class CommandRouter {
             System.out.println("Error: Syntax invalid. Use: bit commit -m \"message\"");
             return;
         }
-        System.out.println("[Modular Phase 1]: Routing snapshot content to GraphManager and Merkle tree layers...");
+        String commitMessage = tokens.get(3);
+        Path playgroundPath = Paths.get("bit-playground");
+
+        if (!Files.exists(playgroundPath)) {
+            System.out.println("No root directory intialized. Please try running 'bit init' first.");
+            return;
+        }
+
+        try {
+            StringBuilder treeContentBuilder = new StringBuilder();
+            DirectoryTree currentTree = new DirectoryTree();
+
+            try (Stream<Path> paths = Files.list(playgroundPath)) {
+                List<Path> fileList = paths.filter(Files::isRegularFile).toList();
+
+                for (Path filePath : fileList) {
+                    String fileName = filePath.getFileName().toString();
+                    String fileContent = Files.readAllBytes(playgroundPath).toString();
+
+                    String blobHash = HashingUtility.hashString(fileContent);
+                    if (!storageEngine.containsObjectHash(blobHash)) storageEngine.saveObject(
+                        blobHash, new BlobNode(blobHash, fileContent));
+
+                    currentTree.addEntry(fileName, blobHash);
+                    treeContentBuilder.append(fileName).append(":").append(blobHash).append(";"); 
+                }
+            }
+
+            String treeRootHash = HashingUtility.hashString(treeContentBuilder.toString());
+            currentTree.setHash(treeRootHash);
+            storageEngine.saveObject(treeRootHash, currentTree);
+
+            String activeBranch = storageEngine.getHeadPointer();
+            String parentCommitHash = storageEngine.getCommitHashFromBranch(activeBranch);
+            List<String> parents = new ArrayList<>();
+            if (parentCommitHash != null) {
+                parents.add(parentCommitHash);
+            }
+            String commitContentString = commitMessage + treeRootHash + System.currentTimeMillis() + parents.toString();
+            String commitHash = HashingUtility.hashString(commitContentString);
+
+            CommitNode commit = new CommitNode(commitHash, commitMessage, treeRootHash, parents);
+            storageEngine.saveCommit(commitHash, commit);
+
+            storageEngine.updateBranchPointer(activeBranch, commitHash);
+            storageEngine.getTrieEngine().insert(commitHash);
+
+            System.out.println("[- Commit Successful -]");
+            System.out.println("Saved snapshot hash reference: " + commitHash);
+            System.out.println("Root Merkle Tree verification ID: " + treeRootHash);
+
+            storageEngine.printStorageMetrics();
+        } catch (IOException e) {
+            System.out.println("Fatal Error during commit processing: " + e.getMessage());
+        }
     }
 
     private void handleBranch(List<String> tokens) {

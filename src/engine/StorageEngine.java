@@ -44,6 +44,10 @@ public class StorageEngine {
         return objectDatabase.get(hash);
     }
 
+    public boolean containsObjectHash(String hash) {
+        return objectDatabase.containsKey(hash);
+    }
+
     public void saveCommit(String hash, CommitNode commit) {
         commitDatabase.put(hash, commit);
     }
