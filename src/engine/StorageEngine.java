@@ -79,10 +79,7 @@ public class StorageEngine {
     public TrieEngine getTrieEngine() {
         return this.trieEngine;
     }   
-
-    /**
-     * Diagnostic utility tool to print current status metrics in console
-     */
+    
     public void printStorageMetrics() {
         System.out.println("--- Bit Storage Engine Metrics ---");
         System.out.println("Total Tracked Objects (Blobs/Trees): " + objectDatabase.size());

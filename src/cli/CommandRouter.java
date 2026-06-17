@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import engine.FileSystemIO;
@@ -23,8 +24,9 @@ public class CommandRouter {
         this.storageEngine = new StorageEngine();
         this.fileSystemIO = new FileSystemIO();
     }
+
     public void handleInput(String input) {
-        List<String> tokens = CommandParser.tokenize(input); 
+        List<String> tokens = CommandParser.tokenize(input);
         String baseCommand = tokens.get(0);
         if (!baseCommand.equalsIgnoreCase("bit")) {
             System.out.println("Error: Command must start with 'bit'. Example: 'bit init'.");
@@ -41,20 +43,35 @@ public class CommandRouter {
 
     private void routeSubCommand(String subCommand, List<String> tokens) {
         switch (subCommand.toLowerCase()) {
-            case "init":     handleInit(tokens);     break;
-            case "edit":     handleEdit(tokens);     break;
-            case "commit":   handleCommit(tokens);   break;
-            case "branch":   handleBranch(tokens);   break;
-            case "checkout": handleCheckout(tokens); break;
-            case "diff":     handleDiff(tokens);     break;
-            case "help":     printHelpMenu();        break;
+            case "init":
+                handleInit(tokens);
+                break;
+            case "edit":
+                handleEdit(tokens);
+                break;
+            case "commit":
+                handleCommit(tokens);
+                break;
+            case "branch":
+                handleBranch(tokens);
+                break;
+            case "checkout":
+                handleCheckout(tokens);
+                break;
+            case "diff":
+                handleDiff(tokens);
+                break;
+            case "help":
+                printHelpMenu();
+                break;
             default:
                 System.out.println("Error: Unknown command 'bit " + subCommand + "'. Type 'bit help'.");
         }
         System.out.println();
     }
 
-    // --- Sub-command execution stubs (Will wire up to 'engine' layer in later phases) ---
+    // --- Sub-command execution stubs (Will wire up to 'engine' layer in later
+    // phases) ---
 
     private void handleInit(List<String> tokens) {
         fileSystemIO.initalizePlayground();
@@ -69,7 +86,8 @@ public class CommandRouter {
         List<String> matches = storageEngine.getTrieEngine().searchPrefix(fileName);
 
         if (matches.isEmpty()) {
-            System.out.println("Error: File matching input pattern sequence '" + fileName + "' untracked in this workspace registry.");
+            System.out.println("Error: File matching input pattern sequence '" + fileName
+                    + "' untracked in this workspace registry.");
             return;
         }
         String resolvedFileName = matches.get(0);
@@ -96,17 +114,28 @@ public class CommandRouter {
             try (Stream<Path> paths = Files.list(playgroundPath)) {
                 List<Path> fileList = paths.filter(Files::isRegularFile).toList();
 
+                System.out.println("List of files in directory: ");
+                for (Path p : fileList)
+                    System.out.println(p.getFileName());
+
                 for (Path filePath : fileList) {
                     String fileName = filePath.getFileName().toString();
-                    String fileContent = Files.readAllBytes(playgroundPath).toString();
+                    System.out.println("Filename: " + fileName);
+                    // String fileContent = Files.readAllBytes(filePath).toString()
+                    String fileContent = Files.readString(filePath);
+                    System.out.println("File content: " + fileContent);
 
                     String blobHash = HashingUtility.hashString(fileContent);
-                    if (!storageEngine.containsObjectHash(blobHash)) storageEngine.saveObject(
-                        blobHash, new BlobNode(blobHash, fileContent));
+                    System.out.println("BlobHash for " + fileName + ": " + blobHash);
+
+                    if (!storageEngine.containsObjectHash(blobHash))
+                        storageEngine.saveObject(
+                                blobHash, new BlobNode(blobHash, fileContent));
 
                     currentTree.addEntry(fileName, blobHash);
-                    treeContentBuilder.append(fileName).append(":").append(blobHash).append(";"); 
+                    treeContentBuilder.append(fileName).append(":").append(blobHash).append(";");
                 }
+                System.out.println("Root tree hash: " + treeContentBuilder.toString());
             }
 
             String treeRootHash = HashingUtility.hashString(treeContentBuilder.toString());
@@ -114,13 +143,18 @@ public class CommandRouter {
             storageEngine.saveObject(treeRootHash, currentTree);
 
             String activeBranch = storageEngine.getHeadPointer();
+            System.out.println("Active branch: " + activeBranch);
             String parentCommitHash = storageEngine.getCommitHashFromBranch(activeBranch);
+            System.out.println("Parent commit hash: " + parentCommitHash);
             List<String> parents = new ArrayList<>();
             if (parentCommitHash != null) {
                 parents.add(parentCommitHash);
             }
             String commitContentString = commitMessage + treeRootHash + System.currentTimeMillis() + parents.toString();
+            System.out.println("Commit content string: " + commitContentString);
+
             String commitHash = HashingUtility.hashString(commitContentString);
+            System.out.println("Commit hash: " + commitHash);
 
             CommitNode commit = new CommitNode(commitHash, commitMessage, treeRootHash, parents);
             storageEngine.saveCommit(commitHash, commit);
@@ -139,17 +173,97 @@ public class CommandRouter {
     }
 
     private void handleBranch(List<String> tokens) {
-        if (tokens.size() < 3) return;
-        System.out.println("[Modular Phase 1]: Registering new string key sequence inside TrieEngine...");
+        if (tokens.size() != 3) {
+            System.out.println("Invalid syntax for checkout command. No options allowed. Please use bit branch <branch-name>.");
+        }
+
+        String newBranchName = tokens.get(2);
+        if (newBranchName.length() == 2 && newBranchName.charAt(0) == '-') {
+            System.out.println("Invalid syntax for checkout command. No options allowed. Please use bit branch <branch-name>.");
+            return;
+        }
+
+        if (storageEngine.branchExists(newBranchName)) {
+            System.out.println(
+                    "Branch with name '" + newBranchName + "' already exists. Try creating a branch with a new name!");
+            return;
+        }
+
+        String activeBranch = storageEngine.getHeadPointer();
+        String activeCommitHash = storageEngine.getCommitHashFromBranch(activeBranch);
+
+        if (activeCommitHash == null) {
+            System.out.println("Cannot create a branch in an empty repository. Make a commit first.");
+            return;
+        }
+
+        storageEngine.updateBranchPointer(newBranchName, activeCommitHash);
+        storageEngine.getTrieEngine().insert(newBranchName);
+        System.out.println("Created branch '" + newBranchName + "' pointing stably to commit: " + activeCommitHash);
     }
 
     private void handleCheckout(List<String> tokens) {
-        if (tokens.size() < 3) return;
-        System.out.println("[Modular Phase 1]: Verifying pointer matches via Trie before triggering disk rewrite...");
+        if (tokens.size() != 3) {
+            System.out.println("Invalid syntax for checkout command. No options allowed. Please use bit checkout <branch-name>.");
+        }
+
+        String target = tokens.get(2);
+        if (target.length() == 2 && target.charAt(0) == '-') {
+            System.out.println("Invalid syntax for checkout command. No options allowed. Please use bit checkout <branch-name>.");
+            return;
+        }
+
+        List<String> matches = storageEngine.getTrieEngine().searchPrefix(target);
+        if (matches.size() == 0) {
+            System.out.println("No branch or commit starting with prefix '" + target + "' exists in the system.");
+        }
+
+        String resolvedTarget = matches.get(0);
+        String targetCommitHash = null;
+
+        if (storageEngine.branchExists(resolvedTarget)) {
+            storageEngine.setHeadPointer(resolvedTarget);
+            targetCommitHash = storageEngine.getCommitHashFromBranch(resolvedTarget);
+            System.out.println("Switched context to branch '" + resolvedTarget + "'");
+        } else {
+            storageEngine.setHeadPointer(resolvedTarget);
+            targetCommitHash = resolvedTarget;
+            System.out.println("Switched context to explicit commit snapshot reference: " + targetCommitHash);
+        }
+
+        if (targetCommitHash == null) {
+            System.out.println("Warning: Target state has no snapshots recorded yet. Working directory untouched.");
+            return;
+        }
+
+        CommitNode targetCommit = storageEngine.getCommit(targetCommitHash);
+        String rootTreeHash = targetCommit.getRootTreeHash();
+        DirectoryTree rooTree = (DirectoryTree) storageEngine.getObject(rootTreeHash);
+        System.out.println("Restoring physical files inside './bit-playground/' to match target snapshot layout...");
+
+        try {
+            Map<String, String> entries = rooTree.getEntries();
+            for (Map.Entry<String, String> e : entries.entrySet()) {
+                String fileName = e.getKey();
+                String blobHash = e.getValue();
+
+                BlobNode blobNode = (BlobNode) storageEngine.getObject(blobHash);
+                String previousTextContent = blobNode.getTextContent();
+
+                Path filePath = Paths.get("bit-playground", fileName);
+                Files.writeString(filePath, previousTextContent);
+            }
+
+            System.out.println("Successfully rolled back working directory timeline layout state!");
+            storageEngine.printStorageMetrics();
+        } catch (IOException e) {
+            System.out.println("Fatal Error reconstructing file snapshots to disk: " + e.getMessage());
+        }
     }
 
     private void handleDiff(List<String> tokens) {
-        System.out.println("[Modular Phase 1]: Accessing LRU Cache before running Dynamic Programming line calculations...");
+        System.out.println(
+                "[Modular Phase 1]: Accessing LRU Cache before running Dynamic Programming line calculations...");
     }
 
     private void printHelpMenu() {
